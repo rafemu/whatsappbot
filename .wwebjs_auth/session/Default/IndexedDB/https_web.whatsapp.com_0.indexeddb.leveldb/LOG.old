@@ -1,0 +1,13 @@
+2025/03/16-18:20:27.048 9303 Reusing MANIFEST /Users/rafemu/Desktop/מהדי/whatsappBot/.wwebjs_auth/session/Default/IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
+2025/03/16-18:20:27.049 9303 Recovering log #1118
+2025/03/16-18:20:27.068 9303 Reusing old log /Users/rafemu/Desktop/מהדי/whatsappBot/.wwebjs_auth/session/Default/IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb/001118.log 
+2025/03/16-18:20:28.960 fa03 Level-0 table #1123: started
+2025/03/16-18:20:28.975 fa03 Level-0 table #1123: 188610 bytes OK
+2025/03/16-18:20:29.010 fa03 Delete type=0 #1118
+2025/03/16-18:20:29.011 fa03 Manual compaction at level-0 from ' x\x01\x00\x00\x00' @ 72057594037927935 : 1 .. ' y\x01\x00\x00\x00' @ 0 : 0; will stop at (end)
+2025/03/16-18:20:31.288 fa03 Compacting 1@1 + 1@2 files
+2025/03/16-18:20:31.347 fa03 Generated table #1124@1: 28809 keys, 1325608 bytes
+2025/03/16-18:20:31.347 fa03 Compacted 1@1 + 1@2 files => 1325608 bytes
+2025/03/16-18:20:31.375 fa03 compacted to: files[ 0 0 1 0 0 0 0 ]
+2025/03/16-18:20:31.375 fa03 Delete type=2 #1120
+2025/03/16-18:20:31.375 fa03 Delete type=2 #1123
