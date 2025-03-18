@@ -1,3 +1,2 @@
-2025/03/16-12:07:13.417 7103 Reusing MANIFEST /Users/rafemu/Desktop/מהדי/whatsappBot/.wwebjs_auth/session-whatsapp-bot/Default/Service Worker/Database/MANIFEST-000001
-2025/03/16-12:07:13.418 7103 Recovering log #3
-2025/03/16-12:07:13.420 7103 Reusing old log /Users/rafemu/Desktop/מהדי/whatsappBot/.wwebjs_auth/session-whatsapp-bot/Default/Service Worker/Database/000003.log 
+2025/03/18-11:52:22.636 1ee03 Creating DB /Users/rafemu/Desktop/מהדי/whatsappBot/.wwebjs_auth/session-whatsapp-bot/Default/Service Worker/Database since it was missing.
+2025/03/18-11:52:22.671 1ee03 Reusing MANIFEST /Users/rafemu/Desktop/מהדי/whatsappBot/.wwebjs_auth/session-whatsapp-bot/Default/Service Worker/Database/MANIFEST-000001

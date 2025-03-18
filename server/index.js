@@ -9,6 +9,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { EventEmitter } from 'events';
 import { initializeWhatsAppClient } from './services/whatsapp.js';
+import { configManager } from './services/configManager.js';
+import { cronManager } from './services/cronManager.js';
+import { auth, adminOnly } from './middleware/auth.js';
 
 // Import routes
 import botRouter from './routes/bot.js';
@@ -18,6 +21,8 @@ import verificationsRouter from './routes/verifications.js';
 import surveyResponsesRouter from './routes/survey-responses.js';
 import endpointsRouter from './routes/endpoints.js';
 import clearingHouseChecksRouter from './routes/clearing-house-checks.js';
+import welcomeMessagesRouter from './routes/welcome-messages.js';
+import authRouter from './routes/auth.js';
 
 // Get directory name in ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -28,7 +33,16 @@ dotenv.config();
 
 // Initialize Express app
 const app = express();
-app.use(cors());
+
+// Configure CORS with specific options
+const corsOptions = {
+  origin: ['http://localhost:5173', 'http://localhost:3000'], // Add your frontend URLs
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // Create uploads directory if it doesn't exist
@@ -46,79 +60,153 @@ const server = createServer(app);
 // Increase EventEmitter default max listeners
 EventEmitter.defaultMaxListeners = 15;
 
-// Initialize Socket.IO with cleanup on disconnect
+// Configure Socket.IO with specific options
 const io = new Server(server, {
   cors: {
-    origin: '*',
-    methods: ['GET', 'POST']
-  }
+    origin: ['http://localhost:5173', 'http://localhost:3000'],
+    methods: ['GET', 'POST'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true
+  },
+  transports: ['websocket'],
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  connectTimeout: 45000,
+  allowEIO3: true
 });
 
-// Handle socket connections
-io.on('connection', (socket) => {
-  console.log('Client connected');
-
-  // Handle startBot event
-  socket.on('startBot', async () => {
-    console.log('Received startBot event');
-    try {
-      await initializeWhatsAppClient(io);
-    } catch (error) {
-      console.error('Error starting bot:', error);
-      socket.emit('botStatus', {
-        active: false,
-        status: 'error',
-        error: error.message
-      });
-    }
-  });
-
-  socket.on('disconnect', () => {
-    console.log('Client disconnected');
-    // Clean up any listeners specific to this socket
-    socket.removeAllListeners();
-  });
+// Socket.IO error handling middleware
+io.engine.on("connection_error", (err) => {
+  console.log('Socket.IO connection error:', err);
 });
 
 // Store io instance in app for access in routes
 app.set('io', io);
 
-// Connect to MongoDB
-console.log('מתחבר למסד הנתונים MongoDB:', process.env.MONGODB_URI);
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('מחובר למסד הנתונים MongoDB'))
-  .catch(err => console.error('שגיאת התחברות ל-MongoDB:', err));
+// Connect to MongoDB with retry logic
+const connectWithRetry = async (retries = 5, interval = 5000) => {
+  for (let i = 0; i < retries; i++) {
+    try {
+      console.log(`Attempting to connect to MongoDB (attempt ${i + 1}/${retries})...`);
+      await mongoose.connect(process.env.MONGODB_URI, {
+        serverSelectionTimeoutMS: 5000,
+        heartbeatFrequencyMS: 2000
+      });
+      console.log('Successfully connected to MongoDB');
+      return true;
+    } catch (err) {
+      console.error(`MongoDB connection attempt ${i + 1} failed:`, err.message);
+      if (i < retries - 1) {
+        console.log(`Retrying in ${interval/1000} seconds...`);
+        await new Promise(resolve => setTimeout(resolve, interval));
+      }
+    }
+  }
+  return false;
+};
 
-// Use routes
-app.use('/api/bot', botRouter);
-app.use('/api/conversations', conversationsRouter);
-app.use('/api/questions', questionsRouter);
-app.use('/api/verifications', verificationsRouter);
-app.use('/api/survey-responses', surveyResponsesRouter);
-app.use('/api/endpoints', endpointsRouter);
-app.use('/api/clearing-house-checks', clearingHouseChecksRouter);
+// Initialize application
+const initializeApp = async () => {
+  try {
+    // Connect to MongoDB first
+    const connected = await connectWithRetry();
+    if (!connected) {
+      throw new Error('Failed to connect to MongoDB after multiple attempts');
+    }
 
-// Health check endpoint
-app.get('/api/health', (req, res) => {
-  const status = {
-    server: 'ok',
-    mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
-  };
-  res.json(status);
-});
+    // Initialize config manager after MongoDB connection is established
+    await configManager.initialize();
+    console.log('Configuration manager initialized successfully');
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error('Server error:', err);
-  res.status(500).json({ 
-    error: 'שגיאת שרת פנימית',
-    message: process.env.NODE_ENV === 'development' ? err.message : undefined
-  });
-});
+    // Initialize cron jobs
+    cronManager.initialize();
+    console.log('Cron jobs initialized successfully');
+
+    // Handle socket connections with improved error handling
+    io.on('connection', (socket) => {
+      console.log('Client connected');
+
+      // Handle errors
+      socket.on('error', (error) => {
+        console.error('Socket error:', error);
+      });
+
+      socket.on('startBot', async () => {
+        console.log('Received startBot event');
+        try {
+          const canStartSession = await configManager.validateSession();
+          if (!canStartSession) {
+            socket.emit('botStatus', {
+              active: false,
+              status: 'error',
+              error: 'הגעת למספר המקסימלי של סשנים פעילים'
+            });
+            return;
+          }
+
+          await initializeWhatsAppClient(io);
+        } catch (error) {
+          console.error('Error starting bot:', error);
+          socket.emit('botStatus', {
+            active: false,
+            status: 'error',
+            error: error.message
+          });
+        }
+      });
+
+      socket.on('disconnect', (reason) => {
+        console.log('Client disconnected:', reason);
+        socket.removeAllListeners();
+      });
+    });
+
+    // Use routes
+    app.use('/api/auth', authRouter);
+    app.use('/api/bot', auth, botRouter);
+    app.use('/api/conversations', auth, conversationsRouter);
+    app.use('/api/questions', auth, questionsRouter);
+    app.use('/api/verifications', auth, verificationsRouter);
+    app.use('/api/survey-responses', auth, surveyResponsesRouter);
+    app.use('/api/endpoints', auth, endpointsRouter);
+    app.use('/api/clearing-house-checks', auth, clearingHouseChecksRouter);
+    app.use('/api/welcome-messages', auth, welcomeMessagesRouter);
+
+    // Health check endpoint
+    app.get('/api/health', (req, res) => {
+      const status = {
+        server: 'ok',
+        mongodb: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+      };
+      res.json(status);
+    });
+
+    // Error handling middleware
+    app.use((err, req, res, next) => {
+      console.error('Server error:', err);
+      res.status(500).json({ 
+        error: 'שגיאת שרת פנימית',
+        message: process.env.NODE_ENV === 'development' ? err.message : undefined
+      });
+    });
+
+    // Start server
+    const PORT = process.env.PORT || 3001;
+    server.listen(PORT, () => {
+      console.log(`השרת פועל בפורט ${PORT}`);
+    });
+  } catch (error) {
+    console.error('Failed to initialize application:', error);
+    process.exit(1);
+  }
+};
 
 // Cleanup function for server shutdown
 const cleanup = async () => {
   console.log('מנקה משאבים לפני כיבוי השרת...');
+  
+  // Stop all cron jobs
+  cronManager.stopAll();
   
   // Close all socket connections
   io.close();
@@ -137,8 +225,8 @@ const cleanup = async () => {
 process.on('SIGTERM', cleanup);
 process.on('SIGINT', cleanup);
 
-// Start server
-const PORT = process.env.PORT || 3001;
-server.listen(PORT, () => {
-  console.log(`השרת פועל בפורט ${PORT}`);
+// Start the application
+initializeApp().catch(error => {
+  console.error('Application startup failed:', error);
+  process.exit(1);
 });

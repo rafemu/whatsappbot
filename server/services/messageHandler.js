@@ -1,34 +1,130 @@
 import Conversation from '../models/Conversation.js';
 import Question from '../models/Question.js';
 import SurveyResponse from '../models/SurveyResponse.js';
-import { handleIdVerification } from './verificationHandler.js';
+import WelcomeMessage from '../models/WelcomeMessage.js';
 import { handleSurveyResponse } from './surveyHandler.js';
+
+const getWelcomeMessage = async () => {
+  const now = new Date();
+  const hour = now.getHours();
+  const day = now.getDay();
+  
+  // Find all active welcome messages
+  const messages = await WelcomeMessage.find({ active: true });
+  
+  for (const message of messages) {
+    let isValid = true;
+    
+    // Check all conditions
+    for (const condition of message.conditions || []) {
+      switch (condition.field) {
+        case 'time':
+          if (condition.operator === 'between') {
+            const [start, end] = condition.value.split('-').map(Number);
+            const [start2, end2] = (condition.value2 || '').split('-').map(Number);
+            if (!(hour >= start && hour <= end) && !(hour >= start2 && hour <= end2)) {
+              isValid = false;
+            }
+          } else if (condition.operator === 'equals') {
+            if (hour !== parseInt(condition.value)) {
+              isValid = false;
+            }
+          }
+          break;
+          
+        case 'day':
+          if (condition.operator === 'equals') {
+            if (day !== parseInt(condition.value)) {
+              isValid = false;
+            }
+          }
+          break;
+      }
+      
+      if (!isValid) break;
+    }
+    
+    if (isValid) {
+      return message.text;
+    }
+  }
+  
+  // Return default message if no conditions match
+  return 'ברוכים הבאים לבוט השירות שלנו! 👋';
+};
+
+const startSurvey = async (phone, client, conversation) => {
+  try {
+    // Get the first active question
+    const firstQuestion = await Question.findOne({ 
+      active: true,
+      order: 0 
+    });
+
+    if (!firstQuestion) {
+      throw new Error('לא נמצאו שאלות פעילות');
+    }
+
+    // Create new survey response
+    const newSurvey = new SurveyResponse({
+      phone,
+      currentQuestionId: firstQuestion._id,
+      responses: [],
+      startedAt: new Date()
+    });
+    await newSurvey.save();
+
+    // Prepare question text
+    let questionText = firstQuestion.text;
+    
+    if (firstQuestion.types.includes('options') && firstQuestion.responseOptions.length > 0) {
+      questionText += '\n\nאפשרויות תשובה:\n' + 
+        firstQuestion.responseOptions.map((opt, i) => `${i + 1}. ${opt}`).join('\n');
+    } else if (firstQuestion.types.includes('image')) {
+      questionText += '\n\nאנא שלחו תמונה.';
+    } else if (firstQuestion.types.includes('api')) {
+      questionText += '\n\nהאם ברצונך להמשיך?\nכן / לא';
+    }
+
+    // Send the first question
+    await client.sendMessage(phone, questionText);
+    
+    conversation.messages.push({
+      from: 'bot',
+      content: questionText,
+      timestamp: new Date()
+    });
+    
+    await conversation.save();
+  } catch (error) {
+    console.error('Error starting survey:', error);
+    throw error;
+  }
+};
 
 export const handleMessage = async (message, client) => {
   try {
-    console.log('Received message:', message.body, 'from:', message.from);
+    console.log('Processing message from:', message.from);
     
     // Find or create conversation
     let conversation = await Conversation.findOne({ phone: message.from });
+    let isNewConversation = false;
+
     if (!conversation) {
       conversation = new Conversation({
         phone: message.from,
         messages: []
       });
+      isNewConversation = true;
     }
     
-    // Create a new messages array with the user's message
-    const updatedMessages = [
-      ...conversation.messages,
-      {
-        from: 'user',
-        content: message.body,
-        timestamp: new Date()
-      }
-    ];
+    // Add user's message to conversation
+    conversation.messages.push({
+      from: 'user',
+      content: message.body,
+      timestamp: new Date()
+    });
     
-    // Update conversation with new messages
-    conversation.messages = updatedMessages;
     await conversation.save();
 
     // Check if user is in an active survey
@@ -37,61 +133,36 @@ export const handleMessage = async (message, client) => {
       isCompleted: false
     }).populate('currentQuestionId');
 
-    // Check if message is an ID number
-    const idNumberRegex = /^\d{9}$/;
-    if (idNumberRegex.test(message.body.trim())) {
-      console.log('Processing ID verification...');
-      await handleIdVerification(message, client, conversation);
+    // If this is a new conversation, send welcome message and start survey
+    if (isNewConversation) {
+      try {
+        // Send welcome message
+        const welcomeMessage = await getWelcomeMessage();
+        await client.sendMessage(message.from, welcomeMessage);
+        
+        conversation.messages.push({
+          from: 'bot',
+          content: welcomeMessage,
+          timestamp: new Date()
+        });
+        
+        await conversation.save();
+
+        // Add a small delay before starting the survey
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        // Start the survey immediately
+        await startSurvey(message.from, client, conversation);
+      } catch (error) {
+        console.error('Error in welcome flow:', error);
+        throw error;
+      }
     } else if (activeSurvey) {
-      console.log('Processing survey response...');
+      // Continue with existing survey
       await handleSurveyResponse(message, client, activeSurvey, conversation);
     } else {
-      // Start new survey if no active survey exists
-      console.log('Starting new survey...');
-      const firstQuestion = await Question.findOne({ 
-        active: true,
-        order: 0 
-      });
-
-      if (firstQuestion) {
-        const newSurvey = new SurveyResponse({
-          phone: message.from,
-          currentQuestionId: firstQuestion._id,
-          responses: [],
-          startedAt: new Date()
-        });
-        await newSurvey.save();
-
-        let response = `ברוך הבא לסקר!\n\n${firstQuestion.text}`;
-        
-        if (firstQuestion.responseOptions && firstQuestion.responseOptions.length > 0) {
-          response += '\n\nאפשרויות תשובה:\n' + 
-            firstQuestion.responseOptions.map((opt, i) => `${i + 1}. ${opt}`).join('\n');
-        }
-
-        await client.sendMessage(message.from, response);
-        
-        // Update conversation with bot's response
-        conversation.messages.push({
-          from: 'bot',
-          content: response,
-          timestamp: new Date()
-        });
-        
-        await conversation.save();
-      } else {
-        const defaultResponse = 'ברוך הבא! אנא שלח את מספר תעודת הזהות שלך לאימות.';
-        await client.sendMessage(message.from, defaultResponse);
-        
-        // Update conversation with bot's response
-        conversation.messages.push({
-          from: 'bot',
-          content: defaultResponse,
-          timestamp: new Date()
-        });
-        
-        await conversation.save();
-      }
+      // Start a new survey if there isn't one active
+      await startSurvey(message.from, client, conversation);
     }
   } catch (error) {
     console.error('Error handling message:', error);

@@ -17,12 +17,23 @@ router.get('/', async (req, res) => {
 // Add a new question
 router.post('/', async (req, res) => {
   try {
-    const { text, responseOptions, types, order, isRequired, conditions, apiEndpointId, apiMessages } = req.body;
-
+    const { 
+      text, 
+      responseOptions, 
+      types, 
+      order, 
+      isRequired, 
+      conditions,
+      apiEndpointId,
+      apiDataMapping 
+    } = req.body;
+    
+    console.log('Received request body:', req.body);
+    
     // Find the highest order value
     const highestOrder = await Question.findOne().sort({ order: -1 });
     const newOrder = order || (highestOrder ? highestOrder.order + 1 : 0);
-
+    
     // Validate apiEndpointId if type includes 'api'
     let formattedApiEndpointId = null;
     if (types?.includes('api')) {
@@ -42,10 +53,10 @@ router.post('/', async (req, res) => {
       order: newOrder,
       isRequired: isRequired || false,
       conditions: conditions || [],
-      apiEndpointId: formattedApiEndpointId,  // ✅ כעת תמיד זה יהיה ObjectId או null
-      apiMessages
+      apiEndpointId: formattedApiEndpointId,
+      apiDataMapping: types?.includes('api') ? apiDataMapping : []
     });
-
+    
     await question.save();
     res.status(201).json(question);
   } catch (error) {
@@ -54,85 +65,59 @@ router.post('/', async (req, res) => {
   }
 });
 
-// router.post('/', async (req, res) => {
-//   try {
-//     const { text, responseOptions, types, order, isRequired, conditions, apiEndpointId, apiMessages } = req.body;
-//     console.log(
-//       'postinng new q',req.body
-//     )
-//     // Find the highest order value
-//     const highestOrder = await Question.findOne().sort({ order: -1 });
-//     const newOrder = order || (highestOrder ? highestOrder.order + 1 : 0);
-    
-//     // Validate apiEndpointId if type includes 'api'
-//     if (types?.includes('api')) {
-//       if (!apiEndpointId) {
-//         return res.status(400).json({ error: 'API endpoint is required when type includes "api"' });
-//       }
-//       // Validate that apiEndpointId is a valid ObjectId
-//       if (!mongoose.Types.ObjectId.isValid(apiEndpointId)) {
-//         return res.status(400).json({ error: 'Invalid API endpoint ID' });
-//       }
-//     }
-    
-//     const question = new Question({ 
-//       text, 
-//       responseOptions, 
-//       types: types || ['text'],
-//       order: newOrder,
-//       isRequired: isRequired || false,
-//       conditions: conditions || [],
-//       apiEndpointId: types?.includes('api') ? apiEndpointId :  null,
-//       apiMessages
-//     });
-    
-//     await question.save();
-//     res.status(201).json(question);
-//   } catch (error) {
-//     console.log(error)
-//     res.status(500).json({ error: error.message });
-//   }
-// });
-
 // Update a question
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { text, responseOptions, active, types, order, isRequired, conditions, apiEndpointId, apiMessages } = req.body;
+    const { 
+      text, 
+      responseOptions, 
+      active, 
+      types, 
+      order, 
+      isRequired, 
+      conditions,
+      apiEndpointId,
+      apiDataMapping 
+    } = req.body;
+    
+    console.log('Updating question with data:', req.body);
     
     // Validate apiEndpointId if type includes 'api'
+    let formattedApiEndpointId = null;
     if (types?.includes('api')) {
       if (!apiEndpointId) {
         return res.status(400).json({ error: 'API endpoint is required when type includes "api"' });
       }
-      // Validate that apiEndpointId is a valid ObjectId
       if (!mongoose.Types.ObjectId.isValid(apiEndpointId)) {
         return res.status(400).json({ error: 'Invalid API endpoint ID' });
       }
+      formattedApiEndpointId = new mongoose.Types.ObjectId(apiEndpointId);
     }
-    
-    const question = await Question.findByIdAndUpdate(
-      id,
-      { 
-        text, 
-        responseOptions, 
-        active, 
-        types, 
-        order, 
-        isRequired, 
-        conditions,
-        apiEndpointId: types?.includes('api') ? apiEndpointId : null,
-        apiMessages
-      },
-      { new: true, runValidators: true }
-    );
-    
+
+    // Find the question first
+    const question = await Question.findById(id);
     if (!question) {
       return res.status(404).json({ error: 'השאלה לא נמצאה' });
     }
+
+    // Update the question fields
+    question.text = text;
+    question.responseOptions = responseOptions;
+    question.active = active;
+    question.types = types;
+    question.order = order;
+    question.isRequired = isRequired;
+    question.conditions = conditions;
+    question.apiEndpointId = formattedApiEndpointId;
+    question.apiDataMapping = types?.includes('api') ? apiDataMapping : [];
+
+    // Save the updated question
+    await question.save();
     
     res.json(question);
   } catch (error) {
+    console.error('Error updating question:', error);
     res.status(500).json({ error: error.message });
   }
 });

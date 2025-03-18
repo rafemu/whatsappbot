@@ -20,7 +20,7 @@ export const handleSurveyResponse = async (message, client, surveyResponse, conv
     }
 
     // Process response based on question type
-    const responseData = await processResponse(message, currentQuestion, client);
+    const responseData = await processResponse(message, currentQuestion, surveyResponse);
     if (!responseData.isValid) {
       await client.sendMessage(message.from, responseData.message);
       
@@ -50,9 +50,11 @@ export const handleSurveyResponse = async (message, client, surveyResponse, conv
       
       let questionText = nextQuestion.text;
       
-      if (nextQuestion.responseOptions && nextQuestion.responseOptions.length > 0) {
+      if (nextQuestion.types.includes('options') && nextQuestion.responseOptions.length > 0) {
         questionText += '\n\nאפשרויות תשובה:\n' + 
           nextQuestion.responseOptions.map((opt, i) => `${i + 1}. ${opt}`).join('\n');
+      } else if (nextQuestion.types.includes('image')) {
+        questionText += '\n\nאנא שלחו תמונה.';
       }
       
       await client.sendMessage(message.from, questionText);
@@ -68,7 +70,8 @@ export const handleSurveyResponse = async (message, client, surveyResponse, conv
       surveyResponse.completedAt = new Date();
       await surveyResponse.save();
       
-      const completionMessage = 'תודה שהשלמת את הסקר! התשובות שלך נשמרו בהצלחה.';
+      const completionMessage ='شكرا سوف نتواصل معك من الساعه 09:30 ولغاية الساعه 15:30 كل ايام الاسبوع ما عادا جمعه سبت😊'
+      //  'תודה רבה! השלמת את כל השאלות בהצלחה. 🎉\nהמידע שמסרת נשמר במערכת.';
       await client.sendMessage(message.from, completionMessage);
       
       conversation.messages.push({
@@ -85,48 +88,76 @@ export const handleSurveyResponse = async (message, client, surveyResponse, conv
   }
 };
 
-const processResponse = async (message, question, client) => {
+const processResponse = async (message, question, surveyResponse) => {
   console.log('Processing response for question type:', question.types);
   
   // Handle API type questions
   if (question.types.includes('api')) {
-    if (message.body.toLowerCase() === 'כן') {
-      try {
-        // Send processing message
-        await client.sendMessage(message.from, question.apiMessages.processingMessage);
+    try {
+      // Prepare API request data based on mapping
+      const requestData = {};
+      
+      // Process each mapping entry
+      for (const mapping of question.apiDataMapping) {
+        let value = '';
         
-        // Make API call
-        const response = await axios.post('http://localhost:3001/api/clearing-house-checks', {
-          phone: message.from,
-          endpointId: question.apiEndpointId._id,
-          requestData: {
-            message: message.body,
-            timestamp: new Date()
-          }
-        });
+        switch (mapping.source) {
+          case 'question':
+            // Get answer from a specific question
+            if (mapping.value === question._id.toString()) {
+              // If mapping refers to current question, use current answer
+              value = message.body;
+            } else {
+              // Get answer from previous question
+              const previousResponse = surveyResponse.responses.find(r => 
+                r.questionId.toString() === mapping.value
+              );
+              if (previousResponse) {
+                value = previousResponse.answer;
+              }
+            }
+            break;
+            
+          case 'static':
+            // Use static value directly
+            value = mapping.value;
+            break;
+            
+          case 'phone':
+            // Use phone number (remove @c.us suffix)
+            value = message.from.replace('@c.us', '');
+            break;
+        }
         
-        return {
-          isValid: true,
-          answer: JSON.stringify(response.data),
-          message: 'הבדיקה הושלמה בהצלחה'
-        };
-      } catch (error) {
-        console.error('API call failed:', error);
-        return {
-          isValid: false,
-          message: 'שגיאה בביצוע הבדיקה. אנא נסה שוב.'
-        };
+        // Only add to requestData if we have a value
+        if (value) {
+          requestData[mapping.key] = value;
+        }
       }
-    } else if (message.body.toLowerCase() === 'לא') {
+
+      console.log('Making API call with data:', requestData);
+
+      // Make API call
+      const response = await axios({
+        method: 'post',
+        url: question.apiEndpointId.url,
+        data: requestData,
+        headers: {
+          'Cookie': 'device_view=full',
+          'Content-Type': 'multipart/form-data'
+        },
+        timeout: 30000
+      });
+      
       return {
         isValid: true,
-        answer: 'declined',
-        message: question.apiMessages.declineMessage
+        answer: JSON.stringify(response.data)
       };
-    } else {
+    } catch (error) {
+      console.error('API call failed:', error);
       return {
         isValid: false,
-        message: question.apiMessages.confirmationMessage
+        message: 'שגיאה בשליחת הבקשה. אנא נסה שוב.'
       };
     }
   }
@@ -157,8 +188,7 @@ const processResponse = async (message, question, client) => {
       return {
         isValid: true,
         answer: 'image uploaded',
-        imageUrl: `/uploads/${fileName}`,
-        message: 'התמונה נשמרה בהצלחה'
+        imageUrl: `/uploads/${fileName}`
       };
     } catch (error) {
       console.error('Error saving image:', error);
@@ -180,16 +210,14 @@ const processResponse = async (message, question, client) => {
     }
     return {
       isValid: true,
-      answer,
-      message: 'תודה על תשובתך'
+      answer
     };
   }
 
   // Handle text type questions (default)
   return {
     isValid: true,
-    answer: message.body,
-    message: 'תודה על תשובתך'
+    answer: message.body
   };
 };
 

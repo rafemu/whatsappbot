@@ -1,11 +1,13 @@
 import express from 'express';
 import BotStatus from '../models/BotStatus.js';
+import BotConfig from '../models/BotConfig.js';
 import { 
   initializeWhatsAppClient, 
   destroyWhatsAppClient, 
   getWhatsAppClient,
   getQRCode 
 } from '../services/whatsapp.js';
+import { configManager } from '../services/configManager.js';
 
 const router = express.Router();
 
@@ -28,6 +30,26 @@ router.get('/status', async (req, res) => {
   }
 });
 
+// Get bot configuration
+router.get('/config', async (req, res) => {
+  try {
+    const config = await configManager.getConfig();
+    res.json(config);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update bot configuration
+router.put('/config', async (req, res) => {
+  try {
+    const config = await configManager.updateConfig(req.body);
+    res.json(config);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Start bot
 router.post('/start', async (req, res) => {
   try {
@@ -40,28 +62,29 @@ router.post('/start', async (req, res) => {
       return res.status(400).json({ error: 'הבוט כבר פעיל' });
     }
 
-    // Get Socket.IO instance
-    const io = req.app.get('io');
-    
-    // Emit status update
-    io.emit('botStatus', {
-      active: false,
-      status: 'initializing'
-    });
+    // Validate session limit
+    const canStartSession = await configManager.validateSession();
+    if (!canStartSession) {
+      return res.status(400).json({ 
+        error: 'הגעת למספר המקסימלי של סשנים פעילים' 
+      });
+    }
 
     // Initialize WhatsApp client
-    await initializeWhatsAppClient(io);
+    await initializeWhatsAppClient(req.app.get('io'));
     res.json({ message: 'מתחיל את הבוט...' });
   } catch (error) {
     // Get Socket.IO instance
     const io = req.app.get('io');
     
-    // Emit error status
-    io.emit('botStatus', {
-      active: false,
-      status: 'error',
-      error: error.message
-    });
+    // Emit error status if Socket.IO is available
+    if (io) {
+      io.emit('botStatus', {
+        active: false,
+        status: 'error',
+        error: error.message
+      });
+    }
 
     res.status(500).json({ error: error.message });
   }
@@ -89,11 +112,13 @@ router.post('/stop', async (req, res) => {
     // Get Socket.IO instance
     const io = req.app.get('io');
     
-    // Emit status update
-    io.emit('botStatus', { 
-      active: false,
-      status: 'stopped'
-    });
+    // Emit status update if Socket.IO is available
+    if (io) {
+      io.emit('botStatus', { 
+        active: false,
+        status: 'stopped'
+      });
+    }
 
     res.json({ message: 'הבוט כובה בהצלחה' });
   } catch (error) {

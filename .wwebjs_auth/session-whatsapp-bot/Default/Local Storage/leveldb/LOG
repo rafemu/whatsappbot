@@ -1,3 +1,2 @@
-2025/03/16-12:07:13.404 7103 Reusing MANIFEST /Users/rafemu/Desktop/מהדי/whatsappBot/.wwebjs_auth/session-whatsapp-bot/Default/Local Storage/leveldb/MANIFEST-000001
-2025/03/16-12:07:13.404 7103 Recovering log #23
-2025/03/16-12:07:13.404 7103 Reusing old log /Users/rafemu/Desktop/מהדי/whatsappBot/.wwebjs_auth/session-whatsapp-bot/Default/Local Storage/leveldb/000023.log 
+2025/03/18-11:52:16.506 9403 Creating DB /Users/rafemu/Desktop/מהדי/whatsappBot/.wwebjs_auth/session-whatsapp-bot/Default/Local Storage/leveldb since it was missing.
+2025/03/18-11:52:16.570 9403 Reusing MANIFEST /Users/rafemu/Desktop/מהדי/whatsappBot/.wwebjs_auth/session-whatsapp-bot/Default/Local Storage/leveldb/MANIFEST-000001

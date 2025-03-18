@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Bot, Power, PowerOff, AlertCircle, RefreshCw, Loader, Smartphone, Link, Link2Off as LinkOff } from 'lucide-react';
+import { Bot, Power, PowerOff, AlertCircle, RefreshCw, Loader, Smartphone, Link, Link2Off as LinkOff, PhoneOff } from 'lucide-react';
 import axios from 'axios';
 
 interface BotControlProps {
@@ -17,12 +17,13 @@ interface BotControlProps {
 
 const BotControl: React.FC<BotControlProps> = ({ 
   botActive, 
-  botStatus,
+  botStatus = { active: false }, // Add default value
   qrCode, 
   onStartBot, 
   onStopBot 
 }) => {
   const [isStarting, setIsStarting] = useState(false);
+  const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [error, setError] = useState('');
   const [qrTimer, setQrTimer] = useState<number | null>(null);
   const [status, setStatus] = useState<'idle' | 'starting' | 'generating-qr' | 'waiting-scan' | 'connected'>('idle');
@@ -106,6 +107,23 @@ const BotControl: React.FC<BotControlProps> = ({
     }
   };
 
+  const handleDisconnectPhone = async () => {
+    if (!confirm('האם אתה בטוח שברצונך לנתק את המכשיר המקושר?')) {
+      return;
+    }
+
+    try {
+      setIsDisconnecting(true);
+      await handleStopBot();
+      await handleStartBot();
+      setIsDisconnecting(false);
+    } catch (error) {
+      console.error('Error disconnecting phone:', error);
+      setError('שגיאה בניתוק המכשיר');
+      setIsDisconnecting(false);
+    }
+  };
+
   const getStatusDisplay = () => {
     switch (status) {
       case 'starting':
@@ -133,7 +151,7 @@ const BotControl: React.FC<BotControlProps> = ({
         return (
           <div className="flex items-center text-green-800">
             <Link className="h-5 w-5 mr-2" />
-            מחובר {botStatus.connectedPhone && `למכשיר ${botStatus.connectedPhone}`}
+            מחובר {botStatus?.connectedPhone && `למכשיר ${botStatus.connectedPhone}`}
           </div>
         );
       default:
@@ -154,29 +172,37 @@ const BotControl: React.FC<BotControlProps> = ({
           שליטה בבוט WhatsApp
         </h2>
         <div className="flex space-x-4">
-          {!botActive && !isStarting ? (
+          {botStatus?.active && botStatus?.connectedPhone && (
+            <button
+              onClick={handleDisconnectPhone}
+              disabled={isDisconnecting}
+              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-yellow-600 hover:bg-yellow-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-500"
+            >
+              {isDisconnecting ? (
+                <Loader className="h-5 w-5 mr-2 animate-spin" />
+              ) : (
+                <PhoneOff className="h-5 w-5 mr-2" />
+              )}
+              נתק מכשיר
+            </button>
+          )}
+
+          {!botStatus?.active ? (
             <button
               onClick={handleStartBot}
+              disabled={isStarting}
               className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
             >
               <Power className="h-5 w-5 mr-2" />
               הפעל בוט
             </button>
-          ) : botActive ? (
+          ) : (
             <button
               onClick={handleStopBot}
               className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
             >
               <PowerOff className="h-5 w-5 mr-2" />
               כבה בוט
-            </button>
-          ) : (
-            <button
-              disabled
-              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-gray-400 cursor-not-allowed"
-            >
-              <RefreshCw className="h-5 w-5 mr-2 animate-spin" />
-              מתחבר...
             </button>
           )}
         </div>
@@ -219,7 +245,7 @@ const BotControl: React.FC<BotControlProps> = ({
         </div>
       )}
 
-      {!botActive && qrCode && (
+      {!botStatus?.active && qrCode && (
         <div className="bg-gray-50 p-6 rounded-lg border border-gray-200">
           <h3 className="text-lg font-medium text-gray-900 mb-4">סרוק קוד QR להתחברות</h3>
           <div className="flex justify-center">
