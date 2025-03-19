@@ -275,3 +275,52 @@ const checkConditions = async (conditions, surveyResponse) => {
   
   return true;
 };
+
+export const startSurvey = async (phone, client, conversation) => {
+  try {
+    // Get the first active question
+    const firstQuestion = await Question.findOne({ 
+      active: true,
+      order: 0 
+    });
+
+    if (!firstQuestion) {
+      throw new Error('לא נמצאו שאלות פעילות');
+    }
+
+    // Create new survey response
+    const newSurvey = new SurveyResponse({
+      phone,
+      currentQuestionId: firstQuestion._id,
+      responses: [],
+      startedAt: new Date()
+    });
+    await newSurvey.save();
+
+    // Prepare question text
+    let questionText = firstQuestion.text;
+    
+    if (firstQuestion.types.includes('options') && firstQuestion.responseOptions.length > 0) {
+      questionText += '\n\nאפשרויות תשובה:\n' + 
+        firstQuestion.responseOptions.map((opt, i) => `${i + 1}. ${opt}`).join('\n');
+    } else if (firstQuestion.types.includes('image')) {
+      questionText += '\n\nאנא שלחו תמונה.';
+    } else if (firstQuestion.types.includes('api')) {
+      questionText += '\n\nהאם ברצונך להמשיך?\nכן / לא';
+    }
+
+    // Send the first question
+    await client.sendMessage(phone, questionText);
+    
+    conversation.messages.push({
+      from: 'bot',
+      content: questionText,
+      timestamp: new Date()
+    });
+    
+    await conversation.save();
+  } catch (error) {
+    console.error('Error starting survey:', error);
+    throw error;
+  }
+};

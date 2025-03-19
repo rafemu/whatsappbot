@@ -2,7 +2,8 @@ import Conversation from '../models/Conversation.js';
 import Question from '../models/Question.js';
 import SurveyResponse from '../models/SurveyResponse.js';
 import WelcomeMessage from '../models/WelcomeMessage.js';
-import { handleSurveyResponse } from './surveyHandler.js';
+import { handleSurveyResponse, startSurvey } from './surveyHandler.js';
+import ParticipantStatus from '../models/ParticipantStatus.js';
 
 const getWelcomeMessage = async () => {
   const now = new Date();
@@ -53,116 +54,57 @@ const getWelcomeMessage = async () => {
   return 'ברוכים הבאים לבוט השירות שלנו! 👋';
 };
 
-const startSurvey = async (phone, client, conversation) => {
-  try {
-    // Get the first active question
-    const firstQuestion = await Question.findOne({ 
-      active: true,
-      order: 0 
-    });
-
-    if (!firstQuestion) {
-      throw new Error('לא נמצאו שאלות פעילות');
-    }
-
-    // Create new survey response
-    const newSurvey = new SurveyResponse({
-      phone,
-      currentQuestionId: firstQuestion._id,
-      responses: [],
-      startedAt: new Date()
-    });
-    await newSurvey.save();
-
-    // Prepare question text
-    let questionText = firstQuestion.text;
-    
-    if (firstQuestion.types.includes('options') && firstQuestion.responseOptions.length > 0) {
-      questionText += '\n\nאפשרויות תשובה:\n' + 
-        firstQuestion.responseOptions.map((opt, i) => `${i + 1}. ${opt}`).join('\n');
-    } else if (firstQuestion.types.includes('image')) {
-      questionText += '\n\nאנא שלחו תמונה.';
-    } else if (firstQuestion.types.includes('api')) {
-      questionText += '\n\nהאם ברצונך להמשיך?\nכן / לא';
-    }
-
-    // Send the first question
-    await client.sendMessage(phone, questionText);
-    
-    conversation.messages.push({
-      from: 'bot',
-      content: questionText,
-      timestamp: new Date()
-    });
-    
-    await conversation.save();
-  } catch (error) {
-    console.error('Error starting survey:', error);
-    throw error;
-  }
-};
-
 export const handleMessage = async (message, client) => {
   try {
-    console.log('Processing message from:', message.from);
+    const { from, body } = message;
     
-    // Find or create conversation
-    let conversation = await Conversation.findOne({ phone: message.from });
-    let isNewConversation = false;
-
+    // Get or create conversation
+    let conversation = await Conversation.findOne({ phone: from });
     if (!conversation) {
-      conversation = new Conversation({
-        phone: message.from,
+      conversation = await Conversation.create({
+        phone: from,
         messages: []
       });
-      isNewConversation = true;
     }
-    
-    // Add user's message to conversation
+
+    // Add user message to conversation
     conversation.messages.push({
       from: 'user',
-      content: message.body,
+      content: body,
       timestamp: new Date()
     });
-    
     await conversation.save();
 
-    // Check if user is in an active survey
-    const activeSurvey = await SurveyResponse.findOne({ 
-      phone: message.from,
+    // Check if user has completed the survey
+    const participantStatus = await ParticipantStatus.findOne({ phoneNumber: from });
+    if (participantStatus && participantStatus.surveyStatus === 'complete') {
+      // User has completed the survey, send appropriate message
+      const responseMessage = 'כבר סיימת את השאלון. במה אפשר לעזור?';
+      await client.sendMessage(from, responseMessage);
+      
+      conversation.messages.push({
+        from: 'bot',
+        content: responseMessage,
+        timestamp: new Date()
+      });
+      
+      await conversation.save();
+      return;
+    }
+
+    // Check for active survey response
+    let surveyResponse = await SurveyResponse.findOne({
+      phone: from,
       isCompleted: false
-    }).populate('currentQuestionId');
+    });
 
-    // If this is a new conversation, send welcome message and start survey
-    if (isNewConversation) {
-      try {
-        // Send welcome message
-        const welcomeMessage = await getWelcomeMessage();
-        await client.sendMessage(message.from, welcomeMessage);
-        
-        conversation.messages.push({
-          from: 'bot',
-          content: welcomeMessage,
-          timestamp: new Date()
-        });
-        
-        await conversation.save();
-
-        // Add a small delay before starting the survey
-        await new Promise(resolve => setTimeout(resolve, 1000));
-
-        // Start the survey immediately
-        await startSurvey(message.from, client, conversation);
-      } catch (error) {
-        console.error('Error in welcome flow:', error);
-        throw error;
-      }
-    } else if (activeSurvey) {
+    // Check if user is in an active survey
+    if (surveyResponse) {
       // Continue with existing survey
-      await handleSurveyResponse(message, client, activeSurvey, conversation);
+      await handleSurveyResponse(message, client, surveyResponse, conversation);
     } else {
       // Start a new survey if there isn't one active
-      await startSurvey(message.from, client, conversation);
+      await startSurvey(from, client, conversation);
     }
   } catch (error) {
     console.error('Error handling message:', error);

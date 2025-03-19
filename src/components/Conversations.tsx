@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { MessageSquare, Search, User, Bot as BotIcon, Image } from 'lucide-react';
+import { io, Socket } from 'socket.io-client';
 
 interface Message {
   from: string;
@@ -22,26 +23,37 @@ const Conversations: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [socket, setSocket] = useState<Socket | null>(null);
 
   useEffect(() => {
     fetchConversations();
 
-    // Set up socket connection for real-time updates
-    const socket = new WebSocket('ws://localhost:3001');
-    
-    socket.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'conversationUpdate') {
-          updateConversation(data.conversation);
-        }
-      } catch (error) {
-        console.error('Error parsing WebSocket message:', error);
-      }
-    };
+    // Set up Socket.IO connection for real-time updates
+    const newSocket = io('http://localhost:3001', {
+      transports: ['websocket'],
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 20000
+    });
+
+    newSocket.on('connect', () => {
+      console.log('Connected to server');
+    });
+
+    newSocket.on('connect_error', (error) => {
+      console.error('Connection error:', error);
+    });
+
+    newSocket.on('conversationUpdate', (updatedConversation: Conversation) => {
+      updateConversation(updatedConversation);
+    });
+
+    setSocket(newSocket);
 
     return () => {
-      socket.close();
+      newSocket.close();
     };
   }, []);
 
